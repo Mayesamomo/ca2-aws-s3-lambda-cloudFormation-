@@ -1,0 +1,426 @@
+{
+    "Parameters": {
+        "InfrastructureStackName": {
+            "Description": "Name of the base infrastructure stack",
+            "Type": "String",
+            "Default": "infrastructure"
+        },
+        "DBPass": {
+            "Type": "String",
+            "Default": "admin123"
+        },
+        "Region": {
+            "Type": "String",
+            "Default": "eu-west-1"
+        }
+    },
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "VM and DB stack",
+    "Resources": {
+        "ServerAEC2": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Sub": "${Region}a"
+                },
+                "KeyName": "ca2-key-pair",
+                "BlockDeviceMappings": [
+                    {
+                        "DeviceName": "/dev/sda1",
+                        "Ebs": {
+                            "VolumeSize": 8
+                        }
+                    }
+                ],
+                "ImageId": "ami-0d5eff06f840b45e9",
+                "InstanceType": "t2.micro",
+                "NetworkInterfaces": [
+                    {
+                        "AssociatePublicIpAddress": false,
+                        "PrivateIpAddress": "10.0.1.4",
+                        "SubnetId": {
+                            "Fn::ImportValue": {
+                                "Fn::Sub": "${InfrastructureStackName}-PrivSubnetA"
+                            }
+                        },
+                        "DeviceIndex": "0",
+                        "Description": "Primary network interface",
+                        "GroupSet": [
+                            {
+                                "Ref": "ServerSecurityGroup"
+                            }
+                        ]
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "ServerAEC2"
+                    }
+                ]
+            }
+        },
+        "ClientAEC2": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Sub": "${Region}a"
+                },
+                "KeyName": "ca2-key-pair",
+                "BlockDeviceMappings": [
+                    {
+                        "DeviceName": "/dev/sda1",
+                        "Ebs": {
+                            "VolumeSize": 8
+                        }
+                    }
+                ],
+                "ImageId": "ami-0d5eff06f840b45e9",
+                "InstanceType": "t2.micro",
+                "NetworkInterfaces": [
+                    {
+                        "AssociatePublicIpAddress": true,
+                        "PrivateIpAddress": "10.0.0.4",
+                        "SubnetId": {
+                            "Fn::ImportValue": {
+                                "Fn::Sub": "${InfrastructureStackName}-PubSubnetA"
+                            }
+                        },
+                        "DeviceIndex": "0",
+                        "Description": "Primary network interface",
+                        "GroupSet": [
+                            {
+                                "Ref": "ClientSecurityGroup"
+                            }
+                        ]
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "ClientAEC2"
+                    }
+                ]
+            }
+        },
+        "ServerSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Server security group",
+                "GroupName": "ServerSecurityGroup",
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": "TCP",
+                        "FromPort": 22,
+                        "ToPort": 22
+                    },
+                    {
+                        "SourceSecurityGroupId": {
+                            "Ref": "LoadBalancerSecurityGroup"
+                        },
+                        "IpProtocol": "TCP",
+                        "FromPort": 8080,
+                        "ToPort": 8080
+                    }
+                ],
+                "SecurityGroupEgress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": -1
+                    }
+                ],
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "ServerSecurityGroup"
+                    }
+                ]
+            }
+        },
+        "ClientSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Client security group",
+                "GroupName": "ClientSecurityGroup",
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": "TCP",
+                        "FromPort": 22,
+                        "ToPort": 22
+                    },
+                    {
+                        "SourceSecurityGroupId": {
+                            "Ref": "LoadBalancerSecurityGroup"
+                        },
+                        "IpProtocol": "TCP",
+                        "FromPort": 5000,
+                        "ToPort": 5000
+                    }
+                ],
+                "SecurityGroupEgress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": -1
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "ClientSecurityGroup"
+                    }
+                ],
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                }
+            }
+        },
+        "DB": {
+            "Type": "AWS::RDS::DBInstance",
+            "Properties": {
+                "AllocatedStorage": 20,
+                "BackupRetentionPeriod": 0,
+                "CopyTagsToSnapshot": true,
+                "DBInstanceClass": "db.t2.micro",
+                "DBInstanceIdentifier": "usermanagerdb",
+                "DBName": "UserManagerDB",
+                "DBSubnetGroupName": "DBSubnetGroup",
+                "Engine": "mysql",
+                "EngineVersion": "8.0.20",
+                "LicenseModel": "general-public-license",
+                "MasterUsername": "admin",
+                "MasterUserPassword": {
+                    "Ref": "DBPass"
+                },
+                "MaxAllocatedStorage": 1000,
+                "MultiAZ": true,
+                "PubliclyAccessible": false,
+                "StorageType": "gp2",
+                "VPCSecurityGroups": [
+                    {
+                        "Ref": "DBSecurityGroup"
+                    }
+                ]
+            }
+        },
+        "DBSubnetGroup": {
+            "Type": "AWS::RDS::DBSubnetGroup",
+            "Properties": {
+                "DBSubnetGroupDescription": "DBSubnetGroup for RDS MySql instance",
+                "DBSubnetGroupName": "DBSubnetGroup",
+                "SubnetIds": [
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PrivSubnetA"
+                        }
+                    },
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PrivSubnetB"
+                        }
+                    }
+                ]
+            }
+        },
+        "DBSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "DB security group",
+                "GroupName": "UserManagerDBSg",
+                "SecurityGroupIngress": [
+                    {
+                        "SourceSecurityGroupId": {
+                            "Ref": "ServerSecurityGroup"
+                        },
+                        "IpProtocol": "TCP",
+                        "FromPort": 3306,
+                        "ToPort": 3306
+                    }
+                ],
+                "SecurityGroupEgress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": -1
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "UserManagerDBSg"
+                    }
+                ],
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                }
+            }
+        },
+        "ServerTG": {
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties": {
+                "HealthCheckEnabled": true,
+                "HealthCheckPath": "/users",
+                "HealthCheckProtocol": "HTTP",
+                "Matcher": {
+                    "HttpCode": "200"
+                },
+                "Port": 8080,
+                "Protocol": "HTTP",
+                "ProtocolVersion": "HTTP1",
+                "Name": "ServerTG",
+                "TargetType": "instance",
+                "Targets": [
+                    {
+                        "Id": {
+                            "Ref": "ServerAEC2"
+                        },
+                        "Port": 8080
+                    }
+                ],
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                }
+            }
+        },
+        "ClientTG": {
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties": {
+                "HealthCheckEnabled": true,
+                "HealthCheckPath": "/",
+                "HealthCheckProtocol": "HTTP",
+                "Matcher": {
+                    "HttpCode": "200"
+                },
+                "Port": 5000,
+                "Protocol": "HTTP",
+                "ProtocolVersion": "HTTP1",
+                "Name": "ClientTG",
+                "TargetType": "instance",
+                "Targets": [
+                    {
+                        "Id": {
+                            "Ref": "ClientAEC2"
+                        },
+                        "Port": 5000
+                    }
+                ],
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                }
+            }
+        },
+        "LoadBalancerSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "LB security group",
+                "GroupName": "LoadBalancerSecurityGroup",
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": "TCP",
+                        "FromPort": 8080,
+                        "ToPort": 8080
+                    },
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": "TCP",
+                        "FromPort": 5000,
+                        "ToPort": 5000
+                    }
+                ],
+                "SecurityGroupEgress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": -1
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "LoadBalancerSecurityGroup"
+                    }
+                ],
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                }
+            }
+        },
+        "LoadBalancer": {
+            "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+            "Properties": {
+                "IpAddressType": "ipv4",
+                "Name": "UserManagerLB",
+                "Scheme": "internet-facing",
+                "SecurityGroups": [
+                    {
+                        "Ref": "LoadBalancerSecurityGroup"
+                    }
+                ],
+                "Type": "application",
+                "Subnets": [
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PubSubnetA"
+                        }
+                    },
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PubSubnetB"
+                        }
+                    }
+                ]
+            }
+        },
+        "LBClientListener": {
+            "Type": "AWS::ElasticLoadBalancingV2::Listener",
+            "Properties": {
+                "DefaultActions": [
+                    {
+                        "TargetGroupArn": {
+                            "Ref": "ClientTG"
+                        },
+                        "Type": "forward"
+                    }
+                ],
+                "LoadBalancerArn": {
+                    "Ref": "LoadBalancer"
+                },
+                "Port": 5000,
+                "Protocol": "HTTP"
+            }
+        },
+        "LBServerListener": {
+            "Type": "AWS::ElasticLoadBalancingV2::Listener",
+            "Properties": {
+                "DefaultActions": [
+                    {
+                        "TargetGroupArn": {
+                            "Ref": "ServerTG"
+                        },
+                        "Type": "forward"
+                    }
+                ],
+                "LoadBalancerArn": {
+                    "Ref": "LoadBalancer"
+                },
+                "Port": 8080,
+                "Protocol": "HTTP"
+            }
+        }
+    }
+}

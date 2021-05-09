@@ -1,0 +1,1 @@
+﻿aws cloudformation update-stack --stack-name=infrastructure --template-body=file://./infra-stack.json

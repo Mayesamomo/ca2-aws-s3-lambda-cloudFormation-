@@ -1,0 +1,1 @@
+﻿aws cloudformation create-stack --stack-name=infrastructure --stack-name=infrastructure --template-body=file://./infra-stack.json 

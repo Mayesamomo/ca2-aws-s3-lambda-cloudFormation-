@@ -1,0 +1,1 @@
+﻿aws cloudformation delete-stack --stack-name=vm-and-db

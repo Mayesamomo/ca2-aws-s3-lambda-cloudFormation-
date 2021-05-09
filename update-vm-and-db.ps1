@@ -1,0 +1,1 @@
+﻿aws cloudformation update-stack --stack-name=vm-and-db --template-body=file://./vm-and-db-stack.json
