@@ -1,1 +1,1 @@
-﻿aws cloudformation update-stack --stack-name=infrastructure --template-body=file://./infra-stack.json
+﻿aws cloudformation update-stack --stack-name=infrastructure --template-body=file://./ca2_template2.json

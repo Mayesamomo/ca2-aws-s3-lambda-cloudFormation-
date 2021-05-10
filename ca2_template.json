@@ -1,0 +1,586 @@
+{
+    "Parameters": {
+        "InfrastructureStackName": {
+            "Description": "Name of the base infrastructure stack created separately, and to be connected here",
+            "Type": "String",
+            "Default": "infrastructure"
+        },
+        "DBPass": {
+            "Type": "String",
+            "Default": "admin123"
+        },
+        "Region": {
+            "Type": "String",
+            "Default": "eu-west-1"
+        },
+        "InstanceType": {
+            "Description": "WebServer EC2 instance type",
+            "Type": "String",
+            "Default": "t2.micro",
+            "AllowedValues": [
+               
+                "t2.micro"
+
+            ]
+        }
+       
+    },
+    "Mappings": {
+        "AWSInstanceType2Arch": {
+            "t2.micro": {
+                "Arch": "HVM64"
+            }
+        },
+        "AWSInstanceType2NATArch": {
+            "t2.micro": {
+                "Arch": "NATHVM64"
+            }
+        },
+        "AWSRegionArch2AMI": {
+            "eu-west-1": {
+                "HVM64": "ami-015232c01a82b847b",
+                "HVMG2": "ami-0d5299b1c6112c3c7"
+            },
+            "eu-west-2": {
+                "HVM64": "ami-0765d48d7e15beb93",
+                "HVMG2": "NOT_SUPPORTED"
+            },
+            "eu-west-3": {
+                "HVM64": "ami-0caf07637eda19d9c",
+                "HVMG2": "NOT_SUPPORTED"
+            }
+        }
+    },
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "VM and DB stack",
+    "Resources": {
+        "SourceCodeBucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Sub": "my-bucket-${AWS::AccountId}"
+                }
+            }
+        },
+        "RootRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "root",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:Get*",
+                                        "s3:List*"
+                                    ],
+                                    "Resource": {
+                                        "Fn::Join": [
+                                            "",
+                                            [
+                                                "arn:aws:s3:::",
+                                                {
+                                                    "Ref": "SourceCodeBucket"
+                                                },
+                                                "/*"
+                                            ]
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "RootInstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    {
+                        "Ref": "RootRole"
+                    }
+                ]
+            }
+        },
+        "BackendLaunchTemplate": {
+            "Type": "AWS::EC2::LaunchTemplate",
+            "Properties": {
+                "LaunchTemplateName": "BackendLaunchTemplate",
+                "LaunchTemplateData": {
+                    "BlockDeviceMappings": [
+                        {
+                            "DeviceName": "/dev/sda1",
+                            "Ebs": {
+                                "VolumeSize": 8
+                            }
+                        }
+                    ],
+                    "ImageId": {
+                        "Fn::FindInMap": [
+                            "AWSRegionArch2AMI",
+                            {
+                                "Ref": "AWS::Region"
+                            },
+                            {
+                                "Fn::FindInMap": [
+                                    "AWSInstanceType2Arch",
+                                    {
+                                        "Ref": "InstanceType"
+                                    },
+                                    "Arch"
+                                ]
+                            }
+                        ]
+                    },
+                    "InstanceType": {
+                        "Ref": "InstanceType"
+                    },
+                    "KeyName": "LAB_KEY",
+                    "SecurityGroupIds": [
+                        {
+                            "Ref": "ServerSecurityGroup"
+                        }
+                    ],
+                    "IamInstanceProfile": {
+                        "Ref": "RootInstanceProfile"
+                    }
+                }
+            }
+        },
+        "BackendAutoScalingGroup": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "AutoScalingGroupName": "BackendAutoScalingGroup",
+                "DesiredCapacity": 2,
+                "HealthCheckGracePeriod": 5,
+                "HealthCheckType": "ELB",
+                "LaunchTemplate": {
+                    "LaunchTemplateId": {
+                        "Ref": "BackendLaunchTemplate"
+                    },
+                    "Version": 1
+                },
+                "MaxSize": 3,
+                "MinSize": 1,
+                "TargetGroupARNs": [
+                    {
+                        "Ref": "ServerTG"
+                    }
+                ],
+                "VPCZoneIdentifier": [
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PrivSubnetA"
+                        }
+                    },
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PrivSubnetB"
+                        }
+                    }
+                ]
+            }
+        },
+        "FrontendLaunchTemplate": {
+            "Type": "AWS::EC2::LaunchTemplate",
+            "Properties": {
+                "LaunchTemplateName": "FrontendLaunchTemplate",
+                "LaunchTemplateData": {
+                    "BlockDeviceMappings": [
+                        {
+                            "DeviceName": "/dev/sda1",
+                            "Ebs": {
+                                "VolumeSize": 8
+                            }
+                        }
+                    ],
+                    "ImageId": {
+                        "Fn::FindInMap": [
+                            "AWSRegionArch2AMI",
+                            {
+                                "Ref": "AWS::Region"
+                            },
+                            {
+                                "Fn::FindInMap": [
+                                    "AWSInstanceType2Arch",
+                                    {
+                                        "Ref": "InstanceType"
+                                    },
+                                    "Arch"
+                                ]
+                            }
+                        ]
+                    },
+                    "InstanceType": {
+                        "Ref": "InstanceType"
+                    },
+                    "KeyName": "LAB_KEY",
+                    "SecurityGroupIds": [
+                        {
+                            "Ref": "ClientSecurityGroup"
+                        }
+                    ]
+                }
+            }
+        },
+        "FrontendAutoScalingGroup": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "AutoScalingGroupName": "FrontendAutoScalingGroup",
+                "DesiredCapacity": 2,
+                "HealthCheckGracePeriod": 5,
+                "HealthCheckType": "ELB",
+                "LaunchTemplate": {
+                    "LaunchTemplateId": {
+                        "Ref": "FrontendLaunchTemplate"
+                    },
+                    "Version": 1
+                },
+                "MaxSize": 3,
+                "MinSize": 1,
+                "TargetGroupARNs": [
+                    {
+                        "Ref": "ClientTG"
+                    }
+                ],
+                "VPCZoneIdentifier": [
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PubSubnetA"
+                        }
+                    },
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PubSubnetB"
+                        }
+                    }
+                ]
+            }
+        },
+        "ServerSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Server security group",
+                "GroupName": "ServerSecurityGroup",
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": "TCP",
+                        "FromPort": 22,
+                        "ToPort": 22
+                    },
+                    {
+                        "SourceSecurityGroupId": {
+                            "Ref": "LoadBalancerSecurityGroup"
+                        },
+                        "IpProtocol": "TCP",
+                        "FromPort": 8080,
+                        "ToPort": 8080
+                    }
+                ],
+                "SecurityGroupEgress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": -1
+                    }
+                ],
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "ServerSecurityGroup"
+                    }
+                ]
+            }
+        },
+        "ClientSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Client security group",
+                "GroupName": "ClientSecurityGroup",
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": "TCP",
+                        "FromPort": 22,
+                        "ToPort": 22
+                    },
+                    {
+                        "SourceSecurityGroupId": {
+                            "Ref": "LoadBalancerSecurityGroup"
+                        },
+                        "IpProtocol": "TCP",
+                        "FromPort": 5000,
+                        "ToPort": 5000
+                    }
+                ],
+                "SecurityGroupEgress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": -1
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "ClientSecurityGroup"
+                    }
+                ],
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                }
+            }
+        },
+        "DB": {
+            "Type": "AWS::RDS::DBInstance",
+            "Properties": {
+                "AllocatedStorage": 20,
+                "BackupRetentionPeriod": 0,
+                "CopyTagsToSnapshot": true,
+                "DBInstanceClass": "db.t2.micro",
+                "DBInstanceIdentifier": "usermanagerdb",
+                "DBName": "UserManagerDB",
+                "DBSubnetGroupName": "DBSubnetGroup",
+                "Engine": "mysql",
+                "EngineVersion": "8.0.20",
+                "LicenseModel": "general-public-license",
+                "MasterUsername": "admin",
+                "MasterUserPassword": {
+                    "Ref": "DBPass"
+                },
+                "MaxAllocatedStorage": 1000,
+                "MultiAZ": true,
+                "PubliclyAccessible": false,
+                "StorageType": "gp2",
+                "VPCSecurityGroups": [
+                    {
+                        "Ref": "DBSecurityGroup"
+                    }
+                ]
+            }
+        },
+        "DBSubnetGroup": {
+            "Type": "AWS::RDS::DBSubnetGroup",
+            "Properties": {
+                "DBSubnetGroupDescription": "DBSubnetGroup for RDS MySql instance",
+                "DBSubnetGroupName": "DBSubnetGroup",
+                "SubnetIds": [
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PrivSubnetA"
+                        }
+                    },
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PrivSubnetB"
+                        }
+                    }
+                ]
+            }
+        },
+        "DBSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "DB security group",
+                "GroupName": "UserManagerDBSg",
+                "SecurityGroupIngress": [
+                    {
+                        "SourceSecurityGroupId": {
+                            "Ref": "ServerSecurityGroup"
+                        },
+                        "IpProtocol": "TCP",
+                        "FromPort": 3306,
+                        "ToPort": 3306
+                    }
+                ],
+                "SecurityGroupEgress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": -1
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "UserManagerDBSg"
+                    }
+                ],
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                }
+            }
+        },
+        "ServerTG": {
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties": {
+                "HealthCheckEnabled": true,
+                "HealthCheckPath": "/users",
+                "HealthCheckProtocol": "HTTP",
+                "Matcher": {
+                    "HttpCode": "200"
+                },
+                "Port": 8080,
+                "Protocol": "HTTP",
+                "ProtocolVersion": "HTTP1",
+                "Name": "ServerTG",
+                "TargetType": "instance",
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                }
+            }
+        },
+        "ClientTG": {
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties": {
+                "HealthCheckEnabled": true,
+                "HealthCheckPath": "/",
+                "HealthCheckProtocol": "HTTP",
+                "Matcher": {
+                    "HttpCode": "200"
+                },
+                "Port": 5000,
+                "Protocol": "HTTP",
+                "ProtocolVersion": "HTTP1",
+                "Name": "ClientTG",
+                "TargetType": "instance",
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                }
+            }
+        },
+        "LoadBalancerSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "LB security group",
+                "GroupName": "LoadBalancerSecurityGroup",
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": "TCP",
+                        "FromPort": 8080,
+                        "ToPort": 8080
+                    },
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": "TCP",
+                        "FromPort": 5000,
+                        "ToPort": 5000
+                    }
+                ],
+                "SecurityGroupEgress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": -1
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "LoadBalancerSecurityGroup"
+                    }
+                ],
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${InfrastructureStackName}-VpcId"
+                    }
+                }
+            }
+        },
+        "LoadBalancer": {
+            "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+            "Properties": {
+                "IpAddressType": "ipv4",
+                "Name": "UserManagerLB",
+                "Scheme": "internet-facing",
+                "SecurityGroups": [
+                    {
+                        "Ref": "LoadBalancerSecurityGroup"
+                    }
+                ],
+                "Type": "application",
+                "Subnets": [
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PubSubnetA"
+                        }
+                    },
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${InfrastructureStackName}-PubSubnetB"
+                        }
+                    }
+                ]
+            }
+        },
+        "LBClientListener": {
+            "Type": "AWS::ElasticLoadBalancingV2::Listener",
+            "Properties": {
+                "DefaultActions": [
+                    {
+                        "TargetGroupArn": {
+                            "Ref": "ClientTG"
+                        },
+                        "Type": "forward"
+                    }
+                ],
+                "LoadBalancerArn": {
+                    "Ref": "LoadBalancer"
+                },
+                "Port": 5000,
+                "Protocol": "HTTP"
+            }
+        },
+        "LBServerListener": {
+            "Type": "AWS::ElasticLoadBalancingV2::Listener",
+            "Properties": {
+                "DefaultActions": [
+                    {
+                        "TargetGroupArn": {
+                            "Ref": "ServerTG"
+                        },
+                        "Type": "forward"
+                    }
+                ],
+                "LoadBalancerArn": {
+                    "Ref": "LoadBalancer"
+                },
+                "Port": 8080,
+                "Protocol": "HTTP"
+            }
+        }
+    }
+}
